@@ -2,7 +2,11 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="그림자동차">
 <title>그림 자동차</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -205,10 +209,25 @@ function findHitStrokeGroup(p){
   strokes.forEach((s,i)=>{ if(!isCarCandidate(s)) return; const d=distToStroke(p,s); if(d<nd){nd=d;nearest=i;} });
   if(nearest<0 || nd>70) return [];
 
-  // 차 영역(땅선 왼쪽 + 땅선 위) 안의 모든 후보를 차로 묶는다.
-  // 떨어져 있는 엠블럼·안테나 등도 함께 포함됨. 배경(오른쪽/땅)은 제외.
+  // 차 후보들의 전체 바운딩 박스 = 자동차 프레임 영역
+  // (배경/땅은 후보가 아니므로 빠지고, 차 후보들만으로 박스를 만든다)
+  let fx0=Infinity, fy0=Infinity, fx1=-Infinity, fy1=-Infinity;
+  strokes.forEach(s=>{ if(!isCarCandidate(s)) return;
+    const b=strokeBounds(s);
+    if(b.minX<fx0)fx0=b.minX; if(b.minY<fy0)fy0=b.minY;
+    if(b.maxX>fx1)fx1=b.maxX; if(b.maxY>fy1)fy1=b.maxY;
+  });
+  // 프레임 박스 안(여유 포함)에 조금이라도 걸치는 모든 획을 차로 묶는다.
+  // 엠블럼·로고·창문 등 프레임 내부의 모든 요소가 하나의 모듈로 인식됨.
+  const pad = 10;
   const group = [];
-  strokes.forEach((s,i)=>{ if(isCarCandidate(s)) group.push(i); });
+  strokes.forEach((s,i)=>{
+    if(isGround(s)) return;                  // 땅은 절대 제외
+    const b = strokeBounds(s);
+    const inside = b.maxX >= fx0-pad && b.minX <= fx1+pad &&
+                   b.maxY >= fy0-pad && b.minY <= fy1+pad;
+    if(inside) group.push(i);
+  });
   return group;
 }
 
