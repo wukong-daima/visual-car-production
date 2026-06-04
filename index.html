@@ -162,13 +162,13 @@ function distToStroke(p, s){
 function boxesNear(a,b,gap){
   return !(a.maxX+gap<b.minX || b.maxX+gap<a.minX || a.maxY+gap<b.minY || b.maxY+gap<a.minY);
 }
-// 길고 납작한 가로선 = 땅(배경). 차 그룹에 절대 포함하지 않음.
+// 화면 너비 절반 이상으로 길게 그은 가로선 = 땅(배경). 차에 절대 포함 안 됨.
 function isGround(s){
   const b = strokeBounds(s);
   const w = b.maxX-b.minX, h = b.maxY-b.minY;
-  if(w < W*0.55) return false;        // 화면 폭의 55% 이상으로 충분히 길어야
-  if(h > 30) return false;            // 세로로 납작해야 (높이 30px 이하)
-  return w > h * 8;                   // 가로가 세로의 8배 이상
+  if(w < W*0.5) return false;         // 화면 폭의 절반 이상으로 길면 땅선
+  if(h > 70) return false;            // 어느 정도 납작해야 (울퉁불퉁/경사 허용)
+  return w > h * 3;                   // 가로가 세로보다 충분히 길어야
 }
 
 // 모든 stroke 중 가장 긴 땅선을 찾는다 (없으면 null)
@@ -211,7 +211,7 @@ function findHitStrokeGroup(p){
 
   // 1) 터치한 획에서 시작해 서로 가까이 붙은 획들을 묶는다(차 본체).
   const group = new Set([nearest]);
-  let changed = true; const gap = 40;
+  let changed = true; const gap = 26;   // 간격 축소: 닿을락말락한 배경이 안 붙도록
   while(changed){ changed=false;
     strokes.forEach((s,i)=>{ if(group.has(i)||!isCarCandidate(s)) return;
       const sb=strokeBounds(s);
@@ -227,16 +227,22 @@ function findHitStrokeGroup(p){
     if(b.minX<fx0)fx0=b.minX; if(b.minY<fy0)fy0=b.minY;
     if(b.maxX>fx1)fx1=b.maxX; if(b.maxY>fy1)fy1=b.maxY;
   });
-  const carH = fy1 - fy0;
+  const carH = fy1 - fy0, carW = fx1 - fx0;
 
-  // 3) 박스 안에 '완전히 들어오는' 작은 획만 추가 흡수(엠블럼·로고 등).
-  //    위로 멀리 떨어진 구름/하늘은 박스 안에 안 들어오므로 자연히 제외됨.
+  // 3) 차 박스 안에 '완전히 들어오는' 작은 부속만 추가 흡수(엠블럼·로고 등).
+  //    - 오른쪽 경계 너머(배경)는 제외
+  //    - 세로로 길쭉한 획(산)은 제외
+  //    - 구름처럼 박스 밖의 것은 자연히 제외
   strokes.forEach((s,i)=>{
     if(group.has(i) || isGround(s)) return;
     const b = strokeBounds(s);
+    const avgX = (b.minX+b.maxX)/2;
+    if(avgX > carRightLimit) return;                 // 오른쪽 배경 제외
+    const sw=b.maxX-b.minX, sh=b.maxY-b.minY;
+    if(sh > carH*0.9) return;                        // 차만큼 세로로 긴 것(산 등) 제외
     const fullyInside = b.minX >= fx0-6 && b.maxX <= fx1+6 &&
                         b.minY >= fy0-6 && b.maxY <= fy1+6;
-    const small = (b.maxX-b.minX) < carH && (b.maxY-b.minY) < carH; // 차보다 작은 부속만
+    const small = sw < carW*0.8 && sh < carH*0.8;    // 차보다 확실히 작은 부속만
     if(fullyInside && small) group.add(i);
   });
 
