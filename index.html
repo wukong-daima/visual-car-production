@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>그림 자동차</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#ffffff; touch-action:none; }
+  #stage { position:fixed; inset:0; background:#ffffff; }
+  canvas { position:absolute; inset:0; display:block; }
+  #palette { position:absolute; top:12px; right:12px; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; max-width:160px; z-index:10; }
+  .swatch {
+    width:26px; height:26px; border-radius:4px;
+    border:2px solid #fff; box-shadow:0 1px 3px rgba(0,0,0,.3);
+    cursor:pointer; transition:transform .1s;
+  }
+  .swatch.active { transform:scale(1.25); outline:2px solid #888; }
+  #tools { position:absolute; top:12px; left:12px; z-index:10; display:flex; gap:8px; }
+  .tool {
+    height:30px; padding:0 12px; border:none; border-radius:6px;
+    background:rgba(0,0,0,.06); color:#555; font:600 13px system-ui; cursor:pointer;
+    display:flex; align-items:center; gap:4px;
+  }
+  .tool.active { background:#1565d8; color:#fff; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="draw"></canvas>
+  <div id="tools">
+    <button class="tool" id="eraserBtn">🩹 지우개</button>
+    <button class="tool" id="clearBtn">🗑 전체 초기화</button>
+  </div>
+  <div id="palette">
+    <div class="swatch active" data-color="#000000" style="background:#000000"></div>
+    <div class="swatch" data-color="#7a7a7a" style="background:#7a7a7a"></div>
+    <div class="swatch" data-color="#e22020" style="background:#e22020"></div>
+    <div class="swatch" data-color="#ff7a00" style="background:#ff7a00"></div>
+    <div class="swatch" data-color="#f5c518" style="background:#f5c518"></div>
+    <div class="swatch" data-color="#2aa84a" style="background:#2aa84a"></div>
+    <div class="swatch" data-color="#1565d8" style="background:#1565d8"></div>
+    <div class="swatch" data-color="#16b3c4" style="background:#16b3c4"></div>
+    <div class="swatch" data-color="#8e44ad" style="background:#8e44ad"></div>
+    <div class="swatch" data-color="#e84393" style="background:#e84393"></div>
+    <div class="swatch" data-color="#7b4a12" style="background:#7b4a12"></div>
+    <div class="swatch" data-color="#9ccc3c" style="background:#9ccc3c"></div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('draw');
+const ctx = canvas.getContext('2d');
+let W, H, scale = window.devicePixelRatio || 1;
+
+function resize(){
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * scale; canvas.height = H * scale;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(scale,0,0,scale,0,0);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 5;
+}
+resize();
+
+let color = '#000000';
+let drawing = false;
+let driving = false;
+let eraser = false;   // 지우개 모드
+let strokes = [];     // [{color, points:[{x,y}]}]
+let current = null;
+
+function redrawAll(){
+  ctx.clearRect(0,0,W,H);
+  strokes.forEach(s=>{
+    ctx.beginPath(); ctx.strokeStyle = s.color;
+    s.points.forEach((p,i)=> i? ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));
+    ctx.stroke();
+  });
+}
+
+const eraserBtn = document.getElementById('eraserBtn');
+eraserBtn.addEventListener('click', ()=>{
+  if(driving) return;
+  eraser = !eraser;
+  eraserBtn.classList.toggle('active', eraser);
+});
+
+document.querySelectorAll('.swatch').forEach(s=>{
+  s.addEventListener('click', ()=>{
+    eraser = false; eraserBtn.classList.remove('active');   // 색 선택하면 지우개 해제
+    document.querySelectorAll('.swatch').forEach(x=>x.classList.remove('active'));
+    s.classList.add('active'); color = s.dataset.color;
+  });
+});
+
+// 터치 지점 근처의 stroke 를 지움 (지우개 모드)
+function eraseAt(p){
+  const before = strokes.length;
+  strokes = strokes.filter(s=> distToStroke(p, s) > 22);
+  if(strokes.length !== before) redrawAll();
+}
+
+function pos(e){ const t = e.touches ? e.touches[0] : e; return { x:t.clientX, y:t.clientY }; }
+
+let startTime, startPos;
+
+function down(e){
+  if(driving) return;
+  e.preventDefault();
+  const p = pos(e);
+  if(eraser){ drawing = true; eraseAt(p); return; }   // 지우개 모드
+  startTime = Date.now(); startPos = p;
+  drawing = true;
+  current = { color, points:[p] };
+  ctx.beginPath(); ctx.strokeStyle = color; ctx.moveTo(p.x, p.y);
+}
+function move(e){
+  if(!drawing || driving) return;
+  e.preventDefault();
+  const p = pos(e);
+  if(eraser){ eraseAt(p); return; }                   // 지우개 모드
+  current.points.push(p);
+  ctx.lineTo(p.x, p.y); ctx.stroke();
+}
+function up(e){
+  if(!drawing) return;
+  drawing = false;
+  if(eraser) return;                                  // 지우개는 여기서 끝
+  const dt = Date.now() - startTime;
+  const totalMove = current.points.reduce((a,p,i,arr)=> i? a+Math.hypot(p.x-arr[i-1].x,p.y-arr[i-1].y):0, 0);
+  if(dt < 250 && totalMove < 12){
+    current = null;
+    const idx = findHitStrokeGroup(startPos);
+    if(idx.length) startDriving(idx);
+    return;
+  }
+  strokes.push(current);
+  current = null;
+}
+
+function strokeBounds(s){
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  s.points.forEach(p=>{ if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y; });
+  return {minX,maxX,minY,maxY};
+}
+function distToStroke(p, s){
+  let best=Infinity; s.points.forEach(pt=>{const d=Math.hypot(pt.x-p.x,pt.y-p.y); if(d<best)best=d;}); return best;
+}
+function boxesNear(a,b,gap){
+  return !(a.maxX+gap<b.minX || b.maxX+gap<a.minX || a.maxY+gap<b.minY || b.maxY+gap<a.minY);
+}
+// 길고 납작한 가로선 = 땅(배경). 차 그룹에 절대 포함하지 않음.
+function isGround(s){
+  const b = strokeBounds(s);
+  const w = b.maxX-b.minX, h = b.maxY-b.minY;
+  if(w < W*0.55) return false;        // 화면 폭의 55% 이상으로 충분히 길어야
+  if(h > 30) return false;            // 세로로 납작해야 (높이 30px 이하)
+  return w > h * 8;                   // 가로가 세로의 8배 이상
+}
+
+// 모든 stroke 중 가장 긴 땅선을 찾는다 (없으면 null)
+function findGround(){
+  let best=null, bestW=0;
+  strokes.forEach(s=>{
+    if(!isGround(s)) return;
+    const b=strokeBounds(s); const w=b.maxX-b.minX;
+    if(w>bestW){ bestW=w; best=s; }
+  });
+  return best;
+}
+
+// 차 = 땅선 위쪽 + 화면 왼쪽 영역에 그린 획들.
+// 땅선과 오른쪽 배경(신호등 등)은 제외.
+function findHitStrokeGroup(p){
+  if(!strokes.length) return [];
+
+  const ground = findGround();
+  const gb = ground ? strokeBounds(ground) : null;
+  // 차 영역의 오른쪽 경계: 땅선이 있으면 땅선 왼쪽 끝 + 폭의 절반, 없으면 화면 절반
+  const carRightLimit = gb ? gb.minX + (gb.maxX-gb.minX)*0.55 : W*0.5;
+  // 땅선 윗변 기준 (이 위에 있는 것만 차 후보)
+  const groundTop = gb ? gb.minY : H;
+
+  // 차 후보 판정: 땅이 아니고, 평균 x가 왼쪽 영역, 대부분 땅선 위
+  function isCarCandidate(s){
+    if(isGround(s)) return false;
+    const b = strokeBounds(s);
+    const avgX = (b.minX+b.maxX)/2;
+    if(avgX > carRightLimit) return false;        // 오른쪽 배경 제외
+    if(b.minY > groundTop + 25) return false;     // 땅선보다 한참 아래면 제외
+    return true;
+  }
+
+  // 터치점이 차 영역 안의 그림 근처인지 확인
+  let nearest=-1, nd=Infinity;
+  strokes.forEach((s,i)=>{ if(!isCarCandidate(s)) return; const d=distToStroke(p,s); if(d<nd){nd=d;nearest=i;} });
+  if(nearest<0 || nd>70) return [];
+
+  // 차 영역(땅선 왼쪽 + 땅선 위) 안의 모든 후보를 차로 묶는다.
+  // 떨어져 있는 엠블럼·안테나 등도 함께 포함됨. 배경(오른쪽/땅)은 제외.
+  const group = [];
+  strokes.forEach((s,i)=>{ if(isCarCandidate(s)) group.push(i); });
+  return group;
+}
+
+// stroke 가 "바퀴"(둥근 닫힌 곡선)인지 판정 + 중심/반지름 반환
+function detectWheel(s){
+  if(s.points.length < 6) return null;
+  const b = strokeBounds(s);
+  const w = b.maxX-b.minX, h = b.maxY-b.minY;
+  if(w < 6 || h < 6) return null;
+  const ratio = w/h;
+  if(ratio < 0.4 || ratio > 2.5) return null;       // 비율 완화 (찌그러진 원도 허용)
+  // 닫힘 조건 완화: 시작·끝점 거리, 또는 충분히 둥글게 돌았으면 닫힌 것으로 간주
+  const a = s.points[0], z = s.points[s.points.length-1];
+  const endGap = Math.hypot(a.x-z.x, a.y-z.y);
+  const perim = s.points.reduce((acc,p,i,arr)=> i? acc+Math.hypot(p.x-arr[i-1].x,p.y-arr[i-1].y):0,0);
+  const looksRound = perim > (w+h);                 // 둘레가 충분히 길면(돌았으면) 원형
+  const closed = endGap < Math.max(w,h)*0.7 || looksRound;
+  if(!closed) return null;
+  const cx=(b.minX+b.maxX)/2, cy=(b.minY+b.maxY)/2;
+  const r=(w+h)/4;
+  if(r > Math.min(W,H)*0.25) return null;           // 너무 크면 차체
+  return {cx, cy, r};
+}
+
+canvas.addEventListener('touchstart', down, {passive:false});
+canvas.addEventListener('touchmove', move, {passive:false});
+canvas.addEventListener('touchend', up);
+canvas.addEventListener('mousedown', down);
+canvas.addEventListener('mousemove', move);
+canvas.addEventListener('mouseup', up);
+
+document.getElementById('clearBtn').addEventListener('click', ()=>{
+  if(driving) return;
+  strokes = []; ctx.clearRect(0,0,W,H);
+  eraser = false; eraserBtn.classList.remove('active');
+});
+
+// 일반 stroke 그리기 (offset 이동 + 살짝 흔들림)
+function drawStroke(s, offset, bump){
+  ctx.beginPath(); ctx.strokeStyle = s.color;
+  s.points.forEach((pt,i)=>{
+    const x = pt.x + offset, y = pt.y + bump;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+}
+// 바퀴 stroke 그리기: 중심을 기준으로 회전 + 이동
+function drawWheel(s, wheel, offset, bump, angle){
+  ctx.beginPath(); ctx.strokeStyle = s.color;
+  const cx = wheel.cx, cy = wheel.cy;
+  const cosA = Math.cos(angle), sinA = Math.sin(angle);
+  s.points.forEach((pt,i)=>{
+    const dx = pt.x - cx, dy = pt.y - cy;
+    const rx = dx*cosA - dy*sinA;
+    const ry = dx*sinA + dy*cosA;
+    const x = cx + rx + offset;
+    const y = cy + ry + bump;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+}
+
+function startDriving(carIdx){
+  driving = true;
+  const carSet = new Set(carIdx);
+
+  // 차 그룹 안에서 바퀴 후보 수집 → 좌(앞)·우(뒤) 1개씩 바퀴로 확정
+  const wheelInfo = {};
+  let wheelR = 28;
+
+  // 차 전체의 세로 범위 (바퀴는 차 하단부에 위치)
+  let carTop=Infinity, carBot=-Infinity, carLeft=Infinity, carRight=-Infinity;
+  carIdx.forEach(i=>{ const b=strokeBounds(strokes[i]);
+    if(b.minY<carTop)carTop=b.minY; if(b.maxY>carBot)carBot=b.maxY;
+    if(b.minX<carLeft)carLeft=b.minX; if(b.maxX>carRight)carRight=b.maxX;
+  });
+  const carH = carBot-carTop;
+  const carMidX = (carLeft+carRight)/2;
+
+  // 바퀴 후보: 적당히 둥글고, 차의 아래쪽 절반에 위치
+  const candidates = [];
+  carIdx.forEach(i=>{
+    const s = strokes[i];
+    if(s.points.length < 4) return;
+    const b = strokeBounds(s);
+    const w=b.maxX-b.minX, h=b.maxY-b.minY;
+    const r=(w+h)/4;
+    const ratio = w/Math.max(h,1);
+    if(r < 3 || r > Math.min(W,H)*0.22) return;     // 크기 필터(완화)
+    if(ratio < 0.35 || ratio > 2.8) return;         // 가로로 너무 길면 차체
+    const cy=(b.minY+b.maxY)/2, cx=(b.minX+b.maxX)/2;
+    if(cy < carTop + carH*0.35) return;             // 차 위쪽(창문/지붕)은 제외
+    candidates.push({ i, cx, cy, r });
+  });
+
+  // 좌측 후보 중 가장 아래 1개, 우측 후보 중 가장 아래 1개 = 앞·뒤 바퀴
+  const left  = candidates.filter(c=> c.cx <= carMidX).sort((a,b)=> b.cy-a.cy);
+  const right = candidates.filter(c=> c.cx >  carMidX).sort((a,b)=> b.cy-a.cy);
+  const picked = [];
+  if(left[0])  picked.push(left[0]);
+  if(right[0]) picked.push(right[0]);
+  // 한쪽에만 후보가 있으면(좌우 구분 실패) 전체에서 아래 2개로 보강
+  if(picked.length < 2){
+    const rest = candidates
+      .filter(c=> !picked.includes(c))
+      .sort((a,b)=> b.cy-a.cy);
+    for(const c of rest){ if(picked.length>=2) break; picked.push(c); }
+  }
+
+  let rsum=0;
+  picked.forEach(c=>{ wheelInfo[c.i] = {cx:c.cx, cy:c.cy, r:c.r}; rsum+=c.r; });
+  if(picked.length) wheelR = rsum/picked.length;
+
+  let carMinX = Infinity;
+  carIdx.forEach(i=> strokes[i].points.forEach(p=>{ if(p.x<carMinX)carMinX=p.x; }));
+  const exitOffset = W - carMinX + 60;   // 전진하여 화면 밖으로 나가는 지점
+
+  // 단계: 0=후진, 1=정지(살짝 멈춤), 2=전진
+  let phase = 0;
+  let offset = 0;          // 차의 누적 수평 이동량 (음수=후진, 양수=전진)
+  let speed = 0;
+
+  const reverseDist = 70;        // 후진 거리(짧게)
+  const reverseAccel = 0.05;     // 후진 가속
+  const reverseCap = 1.6;        // 후진 최고 속도(느리게)
+
+  let pauseFrames = 0;
+  const pauseLen = 14;           // 정지 시간(프레임)
+
+  const fwdAccel = 0.09;         // 전진 가속(후진보다 큼)
+  const fwdCap = 5.5;            // 전진 최고 속도(후진보다 약간 빠르게, 과하지 않게)
+
+  function render(){
+    const bump = Math.sin(offset/9) * 0.8;
+    const angle = offset / wheelR;   // offset 음수면 바퀴도 반대로 회전
+    ctx.clearRect(0,0,W,H);
+    strokes.forEach((s,i)=>{
+      if(!carSet.has(i)){ drawStroke(s, 0, 0); return; }
+      if(wheelInfo[i]) drawWheel(s, wheelInfo[i], offset, bump, angle);
+      else drawStroke(s, offset, bump);
+    });
+  }
+
+  function frame(){
+    if(phase === 0){
+      // 후진: offset 을 음수 방향으로
+      speed = Math.min(speed + reverseAccel, reverseCap);
+      offset -= speed;
+      if(offset <= -reverseDist){
+        offset = -reverseDist; phase = 1; speed = 0; pauseFrames = 0;
+      }
+    } else if(phase === 1){
+      // 잠깐 정지
+      pauseFrames++;
+      if(pauseFrames >= pauseLen){ phase = 2; speed = 0; }
+    } else {
+      // 전진: 가속하며 화면 밖으로
+      speed = Math.min(speed + fwdAccel, fwdCap);
+      offset += speed;
+    }
+
+    render();
+
+    if(phase === 2 && offset >= exitOffset){
+      strokes = strokes.filter((s,i)=>!carSet.has(i));
+      ctx.clearRect(0,0,W,H);
+      strokes.forEach(s=> drawStroke(s, 0, 0));
+      driving = false;
+      return;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('resize', ()=>{
+  if(driving) return;
+  resize(); ctx.clearRect(0,0,W,H);
+  strokes.forEach(s=> drawStroke(s, 0, 0));
+});
+</script>
+</body>
+</html>
