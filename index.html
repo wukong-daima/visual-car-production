@@ -9,27 +9,45 @@
   html, body { width:100%; height:100%; overflow:hidden; background:#ffffff; touch-action:none; }
   #stage { position:fixed; inset:0; background:#ffffff; }
   canvas { position:absolute; inset:0; display:block; }
-  #palette { position:absolute; top:12px; right:12px; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; max-width:160px; z-index:10; }
+
+  /* 팔레트: 우측에 세로 2열로 정렬 (가로 화면에 맞게) */
+  #palette {
+    position:absolute; top:50%; right:12px; transform:translateY(-50%);
+    display:flex; flex-direction:column; flex-wrap:wrap; align-content:flex-end;
+    gap:8px; max-height:90vh; z-index:10;
+  }
   .swatch {
-    width:26px; height:26px; border-radius:4px;
+    width:28px; height:28px; border-radius:5px;
     border:2px solid #fff; box-shadow:0 1px 3px rgba(0,0,0,.3);
     cursor:pointer; transition:transform .1s;
   }
   .swatch.active { transform:scale(1.25); outline:2px solid #888; }
+
+  /* 버튼: 좌측 상단 가로 배치 */
   #tools { position:absolute; top:12px; left:12px; z-index:10; display:flex; gap:8px; }
   .tool {
-    height:30px; padding:0 12px; border:none; border-radius:6px;
-    background:rgba(0,0,0,.06); color:#555; font:600 13px system-ui; cursor:pointer;
-    display:flex; align-items:center; gap:4px;
+    height:34px; padding:0 14px; border:none; border-radius:8px;
+    background:rgba(0,0,0,.06); color:#555; font:600 14px system-ui; cursor:pointer;
+    display:flex; align-items:center; gap:5px;
   }
-  .tool.active { background:#1565d8; color:#fff; }
+  .tool:active { background:rgba(0,0,0,.14); }
+
+  /* 세로로 들고 있을 때 가로 권장 안내 */
+  #rotateHint {
+    position:absolute; inset:0; z-index:50; display:none;
+    background:#fff; color:#444; font:600 18px system-ui;
+    align-items:center; justify-content:center; text-align:center; padding:30px;
+  }
+  @media (orientation: portrait) {
+    #rotateHint { display:flex; }
+  }
 </style>
 </head>
 <body>
 <div id="stage">
   <canvas id="draw"></canvas>
   <div id="tools">
-    <button class="tool" id="eraserBtn">🩹 지우개</button>
+    <button class="tool" id="undoBtn">↩️ 되돌리기</button>
     <button class="tool" id="clearBtn">🗑 전체 초기화</button>
   </div>
   <div id="palette">
@@ -46,6 +64,7 @@
     <div class="swatch" data-color="#7b4a12" style="background:#7b4a12"></div>
     <div class="swatch" data-color="#9ccc3c" style="background:#9ccc3c"></div>
   </div>
+  <div id="rotateHint">📱➡️ 기기를 가로로 돌려주세요</div>
 </div>
 
 <script>
@@ -65,7 +84,6 @@ resize();
 let color = '#000000';
 let drawing = false;
 let driving = false;
-let eraser = false;   // 지우개 모드
 let strokes = [];     // [{color, points:[{x,y}]}]
 let current = null;
 
@@ -78,27 +96,21 @@ function redrawAll(){
   });
 }
 
-const eraserBtn = document.getElementById('eraserBtn');
-eraserBtn.addEventListener('click', ()=>{
+// 되돌리기: 마지막으로 그린 획 하나 삭제
+const undoBtn = document.getElementById('undoBtn');
+undoBtn.addEventListener('click', ()=>{
   if(driving) return;
-  eraser = !eraser;
-  eraserBtn.classList.toggle('active', eraser);
+  if(strokes.length === 0) return;
+  strokes.pop();
+  redrawAll();
 });
 
 document.querySelectorAll('.swatch').forEach(s=>{
   s.addEventListener('click', ()=>{
-    eraser = false; eraserBtn.classList.remove('active');   // 색 선택하면 지우개 해제
     document.querySelectorAll('.swatch').forEach(x=>x.classList.remove('active'));
     s.classList.add('active'); color = s.dataset.color;
   });
 });
-
-// 터치 지점 근처의 stroke 를 지움 (지우개 모드)
-function eraseAt(p){
-  const before = strokes.length;
-  strokes = strokes.filter(s=> distToStroke(p, s) > 22);
-  if(strokes.length !== before) redrawAll();
-}
 
 function pos(e){ const t = e.touches ? e.touches[0] : e; return { x:t.clientX, y:t.clientY }; }
 
@@ -108,7 +120,6 @@ function down(e){
   if(driving) return;
   e.preventDefault();
   const p = pos(e);
-  if(eraser){ drawing = true; eraseAt(p); return; }   // 지우개 모드
   startTime = Date.now(); startPos = p;
   drawing = true;
   current = { color, points:[p] };
@@ -118,14 +129,12 @@ function move(e){
   if(!drawing || driving) return;
   e.preventDefault();
   const p = pos(e);
-  if(eraser){ eraseAt(p); return; }                   // 지우개 모드
   current.points.push(p);
   ctx.lineTo(p.x, p.y); ctx.stroke();
 }
 function up(e){
   if(!drawing) return;
   drawing = false;
-  if(eraser) return;                                  // 지우개는 여기서 끝
   const dt = Date.now() - startTime;
   const totalMove = current.points.reduce((a,p,i,arr)=> i? a+Math.hypot(p.x-arr[i-1].x,p.y-arr[i-1].y):0, 0);
   if(dt < 250 && totalMove < 12){
@@ -234,7 +243,6 @@ canvas.addEventListener('mouseup', up);
 document.getElementById('clearBtn').addEventListener('click', ()=>{
   if(driving) return;
   strokes = []; ctx.clearRect(0,0,W,H);
-  eraser = false; eraserBtn.classList.remove('active');
 });
 
 // 일반 stroke 그리기 (offset 이동 + 살짝 흔들림)
